@@ -40,11 +40,12 @@ assert_eq!(*key_vector.get().unwrap(), vec![4]);
 
 use core::prelude::*;
 
-use alloc::owned::Box;
-use collections::vec::Vec;
-use core::kinds::marker;
+use alloc::rc::Rc;
+use collections::treemap::TreeMap;
+use collections::{Map, MutableMap};
 use core::mem;
-use core::raw;
+use core::ptr;
+use core::fmt;
 
 use local::Local;
 use task::{Task, LocalStorage};
@@ -65,33 +66,46 @@ pub type Key<T> = &'static KeyValue<T>;
 #[allow(missing_doc)]
 pub enum KeyValue<T> { Key }
 
-#[doc(hidden)]
 trait LocalData {}
 impl<T: 'static> LocalData for T {}
 
 // The task-local-map stores all TLD information for the currently running task.
 // It is stored as an owned pointer into the runtime, and it's only allocated
-// when TLD is used for the first time. This map must be very carefully
-// constructed because it has many mutable loans unsoundly handed out on it to
-// the various invocations of TLD requests.
+// when TLD is used for the first time.
 //
-// One of the most important operations is loaning a value via `get` to a
-// caller. In doing so, the slot that the TLD entry is occupying cannot be
-// invalidated because upon returning its loan state must be updated. Currently
-// the TLD map is a vector, but this is possibly dangerous because the vector
-// can be reallocated/moved when new values are pushed onto it.
+// The previous version of TLD handed out loans to its contained data. This
+// meant that a value could not be replaced if it was currently borrowed.
+// However, because all values need to be boxed anyway, this version of TLD
+// just uses Rc directly, allowing for replacing values while they're borrowed.
+// Because every borrow is just an Rc instead of maintaining a pointer into the
+// slot, there's no worries about reallocating the map when inserting new
+// values.
 //
-// This problem currently isn't solved in a very elegant way. Inside the `get`
-// function, it internally "invalidates" all references after the loan is
-// finished and looks up into the vector again. In theory this will prevent
-// pointers from being moved under our feet so long as LLVM doesn't go too crazy
-// with the optimizations.
+// A very common usage pattern for TLD is to use replace(None) to extract a
+// value from TLD, work with it, and then store it (or a derived/new value)
+// back with replace(v). Typically when this happens, there are no extant loans
+// of the TLD data, which means the Rc we use is uniquely owned. In that event,
+// we want to avoid any unnecessary allocation.
 //
-// n.b. If TLD is used heavily in future, this could be made more efficient with
-//      a proper map.
+// When a value is removed from the map, the TLDValue is left behind with the
+// pointer nilled out. This is because a common pattern is to use replace() to
+// extract a value from TLD temporarily, only to restore it (or a new derived
+// value) later. We want to avoid unnecessary shuffling of the tree for these
+// temporary removals. This makes the assumption that every key inserted into a
+// given task's TLD is going to be present for a majority of the rest of the
+// task's lifetime, but that's a fairly safe assumption, and there's very
+// little downside as long as it holds true for most keys.
+//
+// The Map type must be public in order to allow rustrt to see it.
 #[doc(hidden)]
-pub type Map = Vec<Option<(*const u8, TLDValue, uint)>>;
-type TLDValue = Box<LocalData + Send>;
+pub type Map = TreeMap<uint, TLDValue>;
+#[unsafe_no_drop_flag]
+struct TLDValue {
+    // rc_ptr is transmuted from Rc<Option<T>>, possibly null
+    rc_ptr: *const (),
+    // drop_fn is the function that knows how to drop the rc_ptr
+    drop_fn: fn(p: *const ())
+}
 
 // Gets the map from the runtime. Lazily initialises if not done so already.
 unsafe fn get_local_map() -> Option<&mut Map> {
@@ -107,7 +121,7 @@ unsafe fn get_local_map() -> Option<&mut Map> {
         // If this is the first time we've accessed TLD, perform similar
         // actions to the oldsched way of doing things.
         &LocalStorage(ref mut slot) => {
-            *slot = Some(Vec::new());
+            *slot = Some(TreeMap::new());
             match *slot {
                 Some(ref mut map_ptr) => { return Some(map_ptr) }
                 None => fail!("unreachable code"),
@@ -116,102 +130,144 @@ unsafe fn get_local_map() -> Option<&mut Map> {
     }
 }
 
-fn key_to_key_value<T: 'static>(key: Key<T>) -> *const u8 {
-    key as *const KeyValue<T> as *const u8
-}
-
-/// An RAII immutable reference to a task-local value.
+/// An immutable reference to a task-local value.
 ///
-/// The task-local data can be accessed through this value, and when this
-/// structure is dropped it will return the borrow on the data.
+/// The task-local data can be accessed through this value. If the task-local
+/// data is replaced, this reference will still remain valid and the data will
+/// be dropped when the reference goes out of scope.
+// This Ref is a wrapper for an Rc. We don't use the Rc directly because we
+// need an Rc<Option<T>> but the user should only ever see a Ref<T>. We could
+// try to vend an Rc<T> directly by dropping the Option, but that requires us
+// to play some unsafe games with the Rc value in order to preserve the ability
+// to avoid allocation in the common replace(None) + replace(oldval) pattern.
+// We avoid allocation there by "emptying out" the Rc, which right now means
+// replacing the contained Option with a None. If we vended an Rc<T> directly
+// we'd have to instead hold onto Rc<T> values where the contained T has been
+// moved out, using unsafe code, and keeping extra state around in TLDValue to
+// indicate that the Rc is "empty". That's all doable, but the real dirty part
+// is when deallocating the map, we need to be able to destruct the Rc<T>, even
+// if it's empty. We can theoretically do this by using something like
+// `mem::forget(rc.try_unwrap().unwrap())`, because we should be able to rely on
+// the Rc being uniquely-owned. But it still just seems like a bad idea.
+#[deriving(PartialEq,Eq,PartialOrd,Ord)]
 pub struct Ref<T> {
     // FIXME #12808: strange names to try to avoid interfering with
     // field accesses of the contained type via Deref
-    _ptr: &'static T,
-    _key: Key<T>,
-    _index: uint,
-    _nosend: marker::NoSend,
+    _inner: Rc<Option<T>>
+}
+
+fn key_to_key_value<T: 'static>(key: Key<T>) -> uint {
+    key as *const _ as uint
 }
 
 impl<T: 'static> KeyValue<T> {
     /// Replaces a value in task local data.
     ///
     /// If this key is already present in TLD, then the previous value is
-    /// replaced with the provided data, and then returned.
+    /// replaced with the provided data, and then returned, unwrapped if
+    /// possible.
+    ///
+    /// If the previous value was uniquely owned by TLD, it is unwrapped and
+    /// returned as `Ok(Option<T>)`. If the previous value is still referenced
+    /// by any extant `Ref` instances (derived from `get()`) then it is
+    /// returned as `Err(Ref<T>)`.
+    ///
+    /// Any previous values still extant remain usable after this method is
+    /// called, but they no longer reference a value in TLD.
+    ///
+    /// To restore the previous behavior of TLD, where replace() would fail
+    /// if there are any extant `Ref`s, call `unwrap()` on the result.
     ///
     /// # Failure
     ///
-    /// This function will fail if this key is present in TLD and currently on
-    /// loan with the `get` method.
+    /// Fails if there is no local task (because the current thread is not
+    /// owned by the runtime).
     ///
     /// # Example
     ///
     /// ```
     /// local_data_key!(foo: int)
     ///
-    /// assert_eq!(foo.replace(Some(10)), None);
-    /// assert_eq!(foo.replace(Some(4)), Some(10));
-    /// assert_eq!(foo.replace(None), Some(4));
+    /// assert_eq!(foo.replace(Some(10)).unwrap(), None);
+    /// assert_eq!(foo.replace(Some(4)).unwrap(), Some(10));
+    /// assert_eq!(foo.replace(None).unwrap(), Some(4));
+    ///
+    /// assert_eq!(foo.replace(Some(5)).unwrap(), None);
+    /// let val = foo.get();
+    /// assert_eq!(foo.replace(Some(6)), Err(val));
+    /// assert_eq!(foo.replace(None).unwrap(), Some(6));
     /// ```
-    pub fn replace(&'static self, data: Option<T>) -> Option<T> {
+    pub fn replace(&'static self, data: Option<T>) -> Result<Option<T>, Ref<T>> {
         let map = match unsafe { get_local_map() } {
             Some(map) => map,
             None => fail!("must have a local task to insert into TLD"),
         };
         let keyval = key_to_key_value(self);
 
-        // When the task-local map is destroyed, all the data needs to be
-        // cleaned up. For this reason we can't do some clever tricks to store
-        // '~T' as a '*c_void' or something like that. To solve the problem, we
-        // cast everything to a trait (LocalData) which is then stored inside
-        // the map.  Upon destruction of the map, all the objects will be
-        // destroyed and the traits have enough information about them to
-        // destroy themselves.
-        //
-        // Additionally, the type of the local data map must ascribe to Send, so
-        // we do the transmute here to add the Send bound back on. This doesn't
-        // actually matter because TLD will always own the data (until its moved
-        // out) and we're not actually sending it to other schedulers or
-        // anything.
-        let newval = data.map(|d| {
-            let d = box d as Box<LocalData>;
-            let d: Box<LocalData + Send> = unsafe { mem::transmute(d) };
-            (keyval, d, 0)
-        });
-
-        let pos = match self.find(map) {
-            Some((i, _, &0)) => Some(i),
-            Some((_, _, _)) => fail!("TLD value cannot be replaced because it \
-                                      is already borrowed"),
-            None => map.iter().position(|entry| entry.is_none()),
-        };
-
-        match pos {
-            Some(i) => {
-                mem::replace(map.get_mut(i), newval).map(|(_, data, _)| {
-                    // Move `data` into transmute to get out the memory that it
-                    // owns, we must free it manually later.
-                    let t: raw::TraitObject = unsafe { mem::transmute(data) };
-                    let alloc: Box<T> = unsafe { mem::transmute(t.data) };
-
-                    // Now that we own `alloc`, we can just move out of it as we
-                    // would with any other data.
-                    *alloc
-                })
-            }
-            None => {
-                map.push(newval);
+        let data = match (map.find_mut(&keyval), &data) {
+            (None, _) => data,
+            (Some(ref mut slot), _) if slot.rc_ptr.is_null() => {
+                // We have a slot with no Rc in it
+                if data.is_some() {
+                    slot.rc_ptr = unsafe { mem::transmute(Rc::new(data)) };
+                }
                 None
             }
+            (Some(slot), _) => {
+                // we have a slot with an Rc
+                let mut rc: Rc<Option<T>> = unsafe { mem::transmute(slot.rc_ptr) };
+                match (&*rc, &data) {
+                    (&None, &None) => (),
+                    _ => {
+                        // dratted borrowck and its lexical scopes
+                        let res = match rc.try_get_mut() {
+                            Some(val_ref) => Ok(mem::replace(val_ref, data)),
+                            None => Err(data)
+                        };
+                        let data = match res {
+                            Ok(oldval) => {
+                                unsafe { mem::forget(rc); }
+                                return Ok(oldval)
+                            }
+                            Err(data) => data
+                        };
+                        // Rc is not unique, replace it wholesale
+                        if data.is_none() {
+                            slot.rc_ptr = ptr::null();
+                        } else {
+                            slot.rc_ptr = unsafe { mem::transmute(Rc::new(data)) }
+                        }
+                        return Err(Ref{ _inner: rc });
+                    }
+                }
+                unsafe { mem::forget(rc); }
+                None
+            }
+        };
+        if data.is_some() {
+            let val = Rc::new(data);
+            // When the task-local map is destroyed, all the data needs to be
+            // cleaned up. For this reason, we create a shim function that knows how
+            // to convert our *const () back into an Rc<T> so it can be dropped.
+            fn d<T>(p: *const ()) {
+                unsafe { mem::transmute::<_,Rc<Option<T>>>(p) };
+            }
+            let _new = map.insert(keyval, TLDValue {
+                rc_ptr: unsafe { mem::transmute(val) },
+                drop_fn: d::<T>
+            });
+            debug_assert!(_new, "internal bug in KeyValue.replace()");
         }
+        Ok(None)
     }
 
     /// Borrows a value from TLD.
     ///
-    /// If `None` is returned, then this key is not present in TLD. If `Some` is
-    /// returned, then the returned data is a smart pointer representing a new
-    /// loan on this TLD key. While on loan, this key cannot be altered via the
-    /// `replace` method.
+    /// If `None` is returned, then this key is not present in TLD. If `Some`
+    /// is returned, then the returned data is a smart pointer representing a
+    /// new reference to the TLD value. If `replace()` is called, the reference
+    /// will continue to be valid but the referenced value will no longer be in
+    /// TLD.
     ///
     /// # Example
     ///
@@ -228,47 +284,52 @@ impl<T: 'static> KeyValue<T> {
             Some(map) => map,
             None => return None,
         };
+        let keyval = key_to_key_value(self);
 
-        self.find(map).map(|(pos, data, loan)| {
-            *loan += 1;
-
-            // data was created with `~T as ~LocalData`, so we extract
-            // pointer part of the trait, (as ~T), and then use
-            // compiler coercions to achieve a '&' pointer.
-            let ptr = unsafe {
-                let data = data as *const Box<LocalData + Send>
-                                as *const raw::TraitObject;
-                &mut *((*data).data as *mut T)
-            };
-            Ref { _ptr: ptr, _index: pos, _nosend: marker::NoSend, _key: self }
-        })
+        match map.find(&keyval) {
+            Some(slot) if !slot.rc_ptr.is_null() => {
+                let rc: Rc<Option<T>> = unsafe { mem::transmute(slot.rc_ptr) };
+                let ret = match *rc {
+                    None => None,
+                    Some(_) => {
+                        Some(Ref { _inner: rc.clone() })
+                    }
+                };
+                unsafe { mem::forget(rc); }
+                ret
+            }
+            _ => None
+        }
     }
 
-    fn find<'a>(&'static self,
-                map: &'a mut Map) -> Option<(uint, &'a TLDValue, &'a mut uint)>{
-        let key_value = key_to_key_value(self);
-        map.mut_iter().enumerate().filter_map(|(i, entry)| {
-            match *entry {
-                Some((k, ref data, ref mut loan)) if k == key_value => {
-                    Some((i, data, loan))
-                }
-                _ => None
-            }
-        }).next()
+    /// Set a TLD value without returning the old value.
+    ///
+    /// This is a wrapper around `replace()`, for when you want to set TLD but
+    /// don't care about the return value.
+    pub fn set(&'static self, data: Option<T>) {
+        let _ = self.replace(data);
     }
 }
 
 impl<T: 'static> Deref<T> for Ref<T> {
-    fn deref<'a>(&'a self) -> &'a T { self._ptr }
+    #[inline(always)]
+    fn deref<'a>(&'a self) -> &'a T {
+        (*self._inner).as_ref().unwrap()
+    }
 }
 
-#[unsafe_destructor]
-impl<T: 'static> Drop for Ref<T> {
-    fn drop(&mut self) {
-        let map = unsafe { get_local_map().unwrap() };
+impl<T: 'static + fmt::Show> fmt::Show for Ref<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
 
-        let (_, _, ref mut loan) = *map.get_mut(self._index).get_mut_ref();
-        *loan -= 1;
+
+impl Drop for TLDValue {
+    fn drop(&mut self) {
+        if !self.rc_ptr.is_null() {
+            (self.drop_fn)(self.rc_ptr)
+        }
     }
 }
 
