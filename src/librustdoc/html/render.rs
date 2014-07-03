@@ -268,7 +268,7 @@ pub fn run(mut krate: clean::Crate, external_html: &ExternalHtml, dst: Path) -> 
                         cx.layout.playground_url = s.to_string();
                         let name = krate.name.clone();
                         if markdown::playground_krate.get().is_none() {
-                            markdown::playground_krate.replace(Some(Some(name)));
+                            markdown::playground_krate.set(Some(Some(name)));
                         }
                     }
                     clean::Word(ref x)
@@ -354,8 +354,8 @@ pub fn run(mut krate: clean::Crate, external_html: &ExternalHtml, dst: Path) -> 
     // Freeze the cache now that the index has been built. Put an Arc into TLS
     // for future parallelization opportunities
     let cache = Arc::new(cache);
-    cache_key.replace(Some(cache.clone()));
-    current_location_key.replace(Some(Vec::new()));
+    cache_key.set(Some(cache.clone()));
+    current_location_key.set(Some(Vec::new()));
 
     try!(write_shared(&cx, &krate, &*cache, index));
     let krate = try!(render_sources(&mut cx, krate));
@@ -1072,7 +1072,7 @@ impl Context {
             info!("Rendering an item to {}", w.path().display());
             // A little unfortunate that this is done like this, but it sure
             // does make formatting *a lot* nicer.
-            current_location_key.replace(Some(cx.current.clone()));
+            current_location_key.set(Some(cx.current.clone()));
 
             let mut title = cx.current.connect("::");
             if pushname {

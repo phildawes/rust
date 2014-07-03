@@ -147,7 +147,7 @@ pub fn run_core(libs: HashSet<Path>, cfgs: Vec<String>, path: &Path)
                 -> (clean::Crate, CrateAnalysis) {
     let (ctxt, analysis) = get_ast_and_resolve(path, libs, cfgs);
     let ctxt = box(GC) ctxt;
-    super::ctxtkey.replace(Some(ctxt));
+    super::ctxtkey.set(Some(ctxt));
 
     let krate = {
         let mut v = RustdocVisitor::new(&*ctxt, Some(&analysis));

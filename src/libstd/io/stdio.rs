@@ -167,7 +167,7 @@ pub fn stderr_raw() -> StdWriter {
 /// Note that this does not need to be called for all new tasks; the default
 /// output handle is to the process's stdout stream.
 pub fn set_stdout(stdout: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
-    local_stdout.replace(Some(stdout)).and_then(|mut s| {
+    local_stdout.replace(Some(stdout)).ok().unwrap().and_then(|mut s| {
         let _ = s.flush();
         Some(s)
     })
@@ -182,7 +182,7 @@ pub fn set_stdout(stdout: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
 /// Note that this does not need to be called for all new tasks; the default
 /// output handle is to the process's stderr stream.
 pub fn set_stderr(stderr: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
-    local_stderr.replace(Some(stderr)).and_then(|mut s| {
+    local_stderr.replace(Some(stderr)).ok().unwrap().and_then(|mut s| {
         let _ = s.flush();
         Some(s)
     })
@@ -200,11 +200,11 @@ pub fn set_stderr(stderr: Box<Writer + Send>) -> Option<Box<Writer + Send>> {
 //  })
 fn with_task_stdout(f: |&mut Writer| -> IoResult<()>) {
     let result = if Local::exists(None::<Task>) {
-        let mut my_stdout = local_stdout.replace(None).unwrap_or_else(|| {
+        let mut my_stdout = local_stdout.replace(None).ok().unwrap().unwrap_or_else(|| {
             box stdout() as Box<Writer + Send>
         });
         let result = f(my_stdout);
-        local_stdout.replace(Some(my_stdout));
+        local_stdout.set(Some(my_stdout));
         result
     } else {
         let mut io = rt::Stdout;

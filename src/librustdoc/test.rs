@@ -82,7 +82,7 @@ pub fn run(input: &str,
         inlined: RefCell::new(None),
         populated_crate_impls: RefCell::new(HashSet::new()),
     };
-    super::ctxtkey.replace(Some(ctx));
+    super::ctxtkey.set(Some(ctx));
 
     let mut v = RustdocVisitor::new(&*ctx, None);
     v.visit(&ctx.krate);

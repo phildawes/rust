@@ -26,10 +26,10 @@ modify/read the slot specified by the key.
 local_data_key!(key_int: int)
 local_data_key!(key_vector: Vec<int>)
 
-key_int.replace(Some(3));
+key_int.set(Some(3));
 assert_eq!(*key_int.get().unwrap(), 3);
 
-key_vector.replace(Some(vec![4]));
+key_vector.set(Some(vec![4]));
 assert_eq!(*key_vector.get().unwrap(), vec![4]);
 ```
 
@@ -343,11 +343,11 @@ mod tests {
     #[test]
     fn test_tls_multitask() {
         static my_key: Key<String> = &Key;
-        my_key.replace(Some("parent data".to_string()));
+        my_key.set(Some("parent data".to_string()));
         task::spawn(proc() {
             // TLD shouldn't carry over.
             assert!(my_key.get().is_none());
-            my_key.replace(Some("child data".to_string()));
+            my_key.set(Some("child data".to_string()));
             assert!(my_key.get().get_ref().as_slice() == "child data");
             // should be cleaned up for us
         });
@@ -361,18 +361,18 @@ mod tests {
     #[test]
     fn test_tls_overwrite() {
         static my_key: Key<String> = &Key;
-        my_key.replace(Some("first data".to_string()));
-        my_key.replace(Some("next data".to_string())); // Shouldn't leak.
+        my_key.set(Some("first data".to_string()));
+        my_key.set(Some("next data".to_string())); // Shouldn't leak.
         assert!(my_key.get().unwrap().as_slice() == "next data");
     }
 
     #[test]
     fn test_tls_pop() {
         static my_key: Key<String> = &Key;
-        my_key.replace(Some("weasel".to_string()));
-        assert!(my_key.replace(None).unwrap() == "weasel".to_string());
+        my_key.set(Some("weasel".to_string()));
+        assert!(my_key.replace(None).unwrap().unwrap() == "weasel".to_string());
         // Pop must remove the data from the map.
-        assert!(my_key.replace(None).is_none());
+        assert!(my_key.replace(None).unwrap().is_none());
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
         // a stack smaller than 1 MB.
         static my_key: Key<String> = &Key;
         task::spawn(proc() {
-            my_key.replace(Some("hax".to_string()));
+            my_key.set(Some("hax".to_string()));
         });
     }
 
@@ -395,9 +395,9 @@ mod tests {
         static box_key: Key<Gc<()>> = &Key;
         static int_key: Key<int> = &Key;
         task::spawn(proc() {
-            str_key.replace(Some("string data".to_string()));
-            box_key.replace(Some(box(GC) ()));
-            int_key.replace(Some(42));
+            str_key.set(Some("string data".to_string()));
+            box_key.set(Some(box(GC) ()));
+            int_key.set(Some(42));
         });
     }
 
@@ -407,15 +407,15 @@ mod tests {
         static box_key: Key<Gc<()>> = &Key;
         static int_key: Key<int> = &Key;
         task::spawn(proc() {
-            str_key.replace(Some("string data".to_string()));
-            str_key.replace(Some("string data 2".to_string()));
-            box_key.replace(Some(box(GC) ()));
-            box_key.replace(Some(box(GC) ()));
-            int_key.replace(Some(42));
+            str_key.set(Some("string data".to_string()));
+            str_key.set(Some("string data 2".to_string()));
+            box_key.set(Some(box(GC) ()));
+            box_key.set(Some(box(GC) ()));
+            int_key.set(Some(42));
             // This could cause a segfault if overwriting-destruction is done
             // with the crazy polymorphic transmute rather than the provided
             // finaliser.
-            int_key.replace(Some(31337));
+            int_key.set(Some(31337));
         });
     }
 
@@ -425,30 +425,59 @@ mod tests {
         static str_key: Key<String> = &Key;
         static box_key: Key<Gc<()>> = &Key;
         static int_key: Key<int> = &Key;
-        str_key.replace(Some("parent data".to_string()));
-        box_key.replace(Some(box(GC) ()));
+        str_key.set(Some("parent data".to_string()));
+        box_key.set(Some(box(GC) ()));
         task::spawn(proc() {
-            str_key.replace(Some("string data".to_string()));
-            box_key.replace(Some(box(GC) ()));
-            int_key.replace(Some(42));
+            str_key.set(Some("string data".to_string()));
+            box_key.set(Some(box(GC) ()));
+            int_key.set(Some(42));
             fail!();
         });
         // Not quite nondeterministic.
-        int_key.replace(Some(31337));
+        int_key.set(Some(31337));
         fail!();
+    }
+
+    #[test]
+    fn test_cleanup_drops_values() {
+        let (mut tx, mut rx) = channel::<()>();
+        struct Dropper {
+            tx: Sender<()>
+        };
+        impl Drop for Dropper {
+            fn drop(&mut self) {
+                self.tx.send(());
+            }
+        }
+        static key: Key<Dropper> = &Key;
+        task::spawn(proc() {
+            key.set(Some(Dropper{ tx: tx }));
+        });
+        // since we're testing whether the map properly drops the value, failure means
+        // the Sender is never deallocated, so we can't rely on the channel closing in that
+        // event. As such, we're going to use a timer with a relatively long timeout just
+        // to ensure the test doesn't hang forever.
+        let mut timer = ::std::io::timer::Timer::new().unwrap();
+        let timeout = timer.oneshot(5000);
+        select! {
+            () = rx.recv() => (),
+            () = timeout.recv() => {
+                fail!("channel read timed out");
+            }
+        }
     }
 
     #[test]
     fn test_static_pointer() {
         static key: Key<&'static int> = &Key;
         static VALUE: int = 0;
-        key.replace(Some(&VALUE));
+        key.set(Some(&VALUE));
     }
 
     #[test]
     fn test_owned() {
         static key: Key<Box<int>> = &Key;
-        key.replace(Some(box 1));
+        key.set(Some(box 1));
 
         {
             let k1 = key.get().unwrap();
@@ -458,7 +487,7 @@ mod tests {
             assert_eq!(**k2, 1);
             assert_eq!(**k3, 1);
         }
-        key.replace(Some(box 2));
+        key.set(Some(box 2));
         assert_eq!(**key.get().unwrap(), 2);
     }
 
@@ -469,11 +498,11 @@ mod tests {
         static key3: Key<int> = &Key;
         static key4: Key<int> = &Key;
         static key5: Key<int> = &Key;
-        key1.replace(Some(1));
-        key2.replace(Some(2));
-        key3.replace(Some(3));
-        key4.replace(Some(4));
-        key5.replace(Some(5));
+        key1.set(Some(1));
+        key2.set(Some(2));
+        key3.set(Some(3));
+        key4.set(Some(4));
+        key5.set(Some(5));
 
         assert_eq!(*key1.get().unwrap(), 1);
         assert_eq!(*key2.get().unwrap(), 2);
@@ -483,12 +512,12 @@ mod tests {
     }
 
     #[test]
-    #[should_fail]
     fn test_nested_get_set1() {
         static key: Key<int> = &Key;
-        key.replace(Some(4));
+        assert_eq!(key.replace(Some(4)), Ok(None));
 
-        let _k = key.get();
-        key.replace(Some(4));
+        let k = key.get().unwrap();
+        assert_eq!(key.replace(Some(8)).unwrap_err(), k);
+        assert_eq!(*k, 4);
     }
 }

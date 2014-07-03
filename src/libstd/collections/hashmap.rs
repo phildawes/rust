@@ -1735,7 +1735,7 @@ mod test_map {
 
     #[test]
     fn test_drops() {
-        drop_vector.replace(Some(RefCell::new(Vec::from_elem(200, 0i))));
+        drop_vector.set(Some(RefCell::new(Vec::from_elem(200, 0i))));
 
         {
             let mut m = HashMap::new();

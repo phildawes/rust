@@ -569,10 +569,10 @@ mod test {
     #[test]
     fn tls() {
         local_data_key!(key: Gc<String>)
-        key.replace(Some(box(GC) "data".to_string()));
+        key.set(Some(box(GC) "data".to_string()));
         assert_eq!(key.get().unwrap().as_slice(), "data");
         local_data_key!(key2: Gc<String>)
-        key2.replace(Some(box(GC) "data".to_string()));
+        key2.set(Some(box(GC) "data".to_string()));
         assert_eq!(key2.get().unwrap().as_slice(), "data");
     }
 

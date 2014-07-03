@@ -226,7 +226,7 @@ mod test {
         // later on, we should never view the task as having failed.
         let (tx, rx) = channel();
         drop(Future::spawn(proc() {
-            LOCAL.replace(Some(Bomb(tx)));
+            LOCAL.set(Some(Bomb(tx)));
         }));
 
         // Make sure the future didn't fail the task.

@@ -27,10 +27,10 @@ use std::gc::{Gc, GC};
 local_data_key!(used_attrs: BitvSet)
 
 pub fn mark_used(attr: &Attribute) {
-    let mut used = used_attrs.replace(None).unwrap_or_else(|| BitvSet::new());
+    let mut used = used_attrs.replace(None).unwrap().unwrap_or_else(|| BitvSet::new());
     let AttrId(id) = attr.node.id;
     used.insert(id);
-    used_attrs.replace(Some(used));
+    used_attrs.set(Some(used));
 }
 
 pub fn is_used(attr: &Attribute) -> bool {
@@ -169,8 +169,8 @@ pub fn mk_word_item(name: InternedString) -> Gc<MetaItem> {
 local_data_key!(next_attr_id: uint)
 
 pub fn mk_attr_id() -> AttrId {
-    let id = next_attr_id.replace(None).unwrap_or(0);
-    next_attr_id.replace(Some(id + 1));
+    let id = next_attr_id.replace(None).unwrap().unwrap_or(0);
+    next_attr_id.set(Some(id + 1));
     AttrId(id)
 }
 

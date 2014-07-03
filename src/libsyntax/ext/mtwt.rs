@@ -94,7 +94,7 @@ pub fn with_sctable<T>(op: |&SCTable| -> T) -> T {
         Some(ts) => op(&**ts),
         None => {
             let ts = Rc::new(new_sctable_internal());
-            sctable_key.replace(Some(ts.clone()));
+            sctable_key.set(Some(ts.clone()));
             op(&*ts)
         }
     }
@@ -154,7 +154,7 @@ fn with_resolve_table_mut<T>(op: |&mut ResolveTable| -> T) -> T {
         Some(ts) => op(&mut *ts.borrow_mut()),
         None => {
             let ts = Rc::new(RefCell::new(HashMap::new()));
-            resolve_table_key.replace(Some(ts.clone()));
+            resolve_table_key.set(Some(ts.clone()));
             op(&mut *ts.borrow_mut())
         }
     }

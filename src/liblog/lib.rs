@@ -226,7 +226,7 @@ pub fn log(level: u32, loc: &'static LogLocation, args: &fmt::Arguments) {
     // Completely remove the local logger from TLS in case anyone attempts to
     // frob the slot while we're doing the logging. This will destroy any logger
     // set during logging.
-    let mut logger = local_logger.replace(None).unwrap_or_else(|| {
+    let mut logger = local_logger.replace(None).ok().unwrap().unwrap_or_else(|| {
         box DefaultLogger { handle: io::stderr() } as Box<Logger + Send>
     });
     logger.log(&LogRecord {
@@ -236,7 +236,7 @@ pub fn log(level: u32, loc: &'static LogLocation, args: &fmt::Arguments) {
         module_path: loc.module_path,
         line: loc.line,
     });
-    local_logger.replace(Some(logger));
+    local_logger.set(Some(logger));
 }
 
 /// Getter for the global log level. This is a function so that it can be called
@@ -248,7 +248,7 @@ pub fn log_level() -> u32 { unsafe { LOG_LEVEL } }
 /// Replaces the task-local logger with the specified logger, returning the old
 /// logger.
 pub fn set_logger(logger: Box<Logger + Send>) -> Option<Box<Logger + Send>> {
-    local_logger.replace(Some(logger))
+    local_logger.replace(Some(logger)).ok().unwrap()
 }
 
 /// A LogRecord is created by the logging macros, and passed as the only

@@ -567,7 +567,7 @@ pub fn get_ident_interner() -> Rc<IdentInterner> {
         Some(interner) => interner.clone(),
         None => {
             let interner = Rc::new(mk_fresh_ident_interner());
-            key.replace(Some(interner.clone()));
+            key.set(Some(interner.clone()));
             interner
         }
     }

@@ -21,14 +21,14 @@ pub fn time<T, U>(do_it: bool, what: &str, u: U, f: |U| -> T) -> T {
     if !do_it { return f(u); }
 
     let old = depth.get().map(|d| *d).unwrap_or(0);
-    depth.replace(Some(old + 1));
+    depth.set(Some(old + 1));
 
     let start = time::precise_time_s();
     let rv = f(u);
     let end = time::precise_time_s();
 
     println!("{}time: {:3.3f} s\t{}", "  ".repeat(old), end - start, what);
-    depth.replace(Some(old));
+    depth.set(Some(old));
 
     rv
 }

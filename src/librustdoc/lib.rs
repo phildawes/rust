@@ -292,7 +292,7 @@ fn rust_input(cratefile: &str, matches: &getopts::Matches) -> Output {
                        &cr)
     }).map_err(|boxed_any|format!("{:?}", boxed_any)).unwrap();
     info!("finished with rustc");
-    analysiskey.replace(Some(analysis));
+    analysiskey.set(Some(analysis));
 
     // Process all of the crate attributes, extracting plugin metadata along
     // with the passes which we are supposed to run.

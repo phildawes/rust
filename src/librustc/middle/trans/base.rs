@@ -105,7 +105,7 @@ pub fn with_insn_ctxt(blk: |&[&'static str]|) {
 }
 
 pub fn init_insn_ctxt() {
-    task_local_insn_key.replace(Some(RefCell::new(Vec::new())));
+    task_local_insn_key.set(Some(RefCell::new(Vec::new())));
 }
 
 pub struct _InsnCtxt {

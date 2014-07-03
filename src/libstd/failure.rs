@@ -75,7 +75,7 @@ pub fn on_fail(obj: &Any + Send, file: &'static str, line: uint) {
         let n = name.as_ref().map(|n| n.as_slice()).unwrap_or("<unnamed>");
 
         match local_stderr.replace(None) {
-            Some(mut stderr) => {
+            Ok(Some(mut stderr)) => {
                 // FIXME: what to do when the task printing fails?
                 let _ = writeln!(stderr,
                                  "task '{}' failed at '{}', {}:{}\n",
@@ -83,9 +83,10 @@ pub fn on_fail(obj: &Any + Send, file: &'static str, line: uint) {
                 if backtrace::log_enabled() {
                     let _ = backtrace::write(stderr);
                 }
-                local_stderr.replace(Some(stderr));
+                local_stderr.set(Some(stderr));
             }
-            None => {
+            // treat Err(ref) the same as None; we can't use it anyway, it's not mutable
+            _ => {
                 let _ = writeln!(&mut err, "task '{}' failed at '{}', {}:{}",
                                  n, msg, file, line);
                 if backtrace::log_enabled() {

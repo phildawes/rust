@@ -425,8 +425,8 @@ impl LangString {
 /// used at the beginning of rendering an entire HTML page to reset from the
 /// previous state (if any).
 pub fn reset_headers() {
-    used_header_map.replace(Some(RefCell::new(HashMap::new())));
-    test_idx.replace(Some(Cell::new(0)));
+    used_header_map.set(Some(RefCell::new(HashMap::new())));
+    test_idx.set(Some(Cell::new(0)));
 }
 
 impl<'a> fmt::Show for Markdown<'a> {
