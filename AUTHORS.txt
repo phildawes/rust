@@ -40,7 +40,7 @@ Alfie John <alfie@alfie.wtf>
 Alfie John <alfiej@fastmail.fm>
 Ali Smesseim <smesseim.ali@gmail.com>
 Alisdair Owens <awo101@zepler.net>
-Aljaž "g5pw" Srebrnič <a2piratesoft@gmail.com>
+Aljaž "g5pw" Srebrnič <a2piratesoft@gmail.com>
 Amy Unger <amy.e.unger@gmail.com>
 Anders Kaseorg <andersk@mit.edu>
 Andre Arko <andre@arko.net>
@@ -393,7 +393,7 @@ John Clements <clements@racket-lang.org>
 John Fresco <john.fresco@utah.edu>
 John Gallagher <jgallagher@bignerdranch.com>
 John Hodge <acessdev@gmail.com>
-John Kåre Alsaker <john.kare.alsaker@gmail.com>
+John Kåre Alsaker <john.kare.alsaker@gmail.com>
 John Kleint <jk@hinge.co>
 John Louis Walker <injyuw@gmail.com>
 John Schmidt <john.schmidt.h@gmail.com>
@@ -453,7 +453,7 @@ Lars Bergstrom <lbergstrom@mozilla.com>
 Laurence Tratt <laurie@tratt.net>
 Laurent Bonnans <bonnans.l@gmail.com>
 Lauri Lehmijoki <lauri.lehmijoki@iki.fi>
-Lawrence Velázquez <larryv@alum.mit.edu>
+Lawrence Velázquez <larryv@alum.mit.edu>
 Leah Hanson <astrieanna@gmail.com>
 Lee Wondong <wdlee91@gmail.com>
 LemmingAvalanche <haugsbakk@yahoo.no>
@@ -606,7 +606,7 @@ Peter Schuller <peter.schuller@infidyne.com>
 Peter Williams <peter@newton.cx>
 Peter Zotov <whitequark@whitequark.org>
 Petter Remen <petter.remen@gmail.com>
-Phil Dawes <pdawes@drw.com>
+Phil Dawes <phil@phildawes.net>
 Phil Ruffwind <rf@rufflewind.com>
 Philip Munksgaard <pmunksgaard@gmail.com>
 Philipp Brüschweiler <blei42@gmail.com>
